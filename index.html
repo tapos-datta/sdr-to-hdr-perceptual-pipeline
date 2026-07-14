@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDR-to-HDR Perceptual Pipeline</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --glass-bg: #0a0a1a;
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --accent-blue: #4fc3f7;
+            --accent-green: #66bb6a;
+            --accent-orange: #ffb74d;
+            --accent-pink: #f06292;
+            --accent-purple: #b388ff;
+            --text-primary: rgba(255, 255, 255, 0.95);
+            --text-secondary: rgba(255, 255, 255, 0.6);
+            --text-dim: rgba(255, 255, 255, 0.35);
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: var(--font-sans);
+            color: var(--text-primary);
+        }
+
+        .app-container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+        }
+
+        /* ── Left Pane (Canvas) ── */
+        .gl-pane {
+            flex: 1;
+            position: relative;
+            height: 100%;
+            background: #000;
+        }
+
+        canvas#glcanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .panel-labels {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            pointer-events: none;
+        }
+
+        .panel-label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            padding-bottom: 24px;
+            gap: 6px;
+            background: linear-gradient(0deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 40%);
+        }
+
+        .panel-label-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 6px;
+            background: rgba(10, 10, 30, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--glass-border);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+        }
+
+        .panel-label-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .dot-blue { background: var(--accent-blue); box-shadow: 0 0 8px var(--accent-blue); }
+        .dot-orange { background: var(--accent-orange); box-shadow: 0 0 8px var(--accent-orange); }
+        .dot-green { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+        .dot-pink { background: var(--accent-pink); box-shadow: 0 0 8px var(--accent-pink); }
+
+        .panel-label-desc {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-align: center;
+        }
+
+        .fps-counter {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid var(--glass-border);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent-green);
+            pointer-events: none;
+        }
+        .fps-counter span { color: var(--text-dim); }
+
+        /* ── Right Pane (Sidebar) ── */
+        .sidebar-pane {
+            width: 400px;
+            min-width: 400px;
+            height: 100%;
+            background: var(--glass-bg);
+            border-left: 1px solid var(--glass-border);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .logo-area { display: flex; align-items: center; gap: 14px; }
+        .logo-icon {
+            width: 36px; height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; font-weight: 700; color: #fff;
+        }
+        .logo-title { font-size: 15px; font-weight: 600; line-height: 1.2; }
+        .logo-subtitle { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; }
+
+        .top-actions { display: flex; gap: 10px; }
+        .btn-glass {
+            flex: 1;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--glass-border);
+            background: rgba(255,255,255,0.05);
+            color: var(--text-primary);
+            font-size: 12px; font-weight: 500;
+            cursor: pointer; text-decoration: none;
+            transition: all 0.2s;
+        }
+        .btn-glass:hover { background: rgba(255,255,255,0.1); }
+        .btn-glass svg { width: 14px; height: 14px; fill: currentColor; }
+
+        .sidebar-section {
+            padding: 24px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .sidebar-section h3 {
+            font-size: 13px; font-weight: 600; text-transform: uppercase;
+            color: var(--accent-orange);
+            margin-bottom: 20px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .sidebar-section.pipeline h3 { color: var(--accent-blue); }
+
+        .control-group { margin-bottom: 16px; }
+        .control-group label {
+            display: flex; justify-content: space-between;
+            font-size: 11px; font-weight: 500; text-transform: uppercase;
+            color: var(--text-dim); margin-bottom: 8px;
+        }
+        .control-group label span { color: var(--accent-blue); font-family: var(--font-mono); }
+        .control-group input[type="range"] { width: 100%; accent-color: var(--accent-blue); cursor: pointer; }
+
+        .info-item {
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            margin-bottom: 12px;
+        }
+        .info-item-label { font-size: 10px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+        .info-item-value { font-size: 13px; color: var(--text-primary); line-height: 1.4; }
+        .info-item-value code {
+            font-family: var(--font-mono); font-size: 11px;
+            padding: 2px 6px; border-radius: 4px;
+            background: rgba(255,255,255,0.06); color: var(--accent-purple);
+        }
+
+        /* Loading */
+        .loading-indicator {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            display: flex; flex-direction: column; align-items: center; gap: 16px;
+            z-index: 100; transition: opacity 0.5s;
+        }
+        .loading-indicator.hidden { opacity: 0; pointer-events: none; }
+        .loading-spinner {
+            width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: var(--accent-blue); border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-size: 12px; text-transform: uppercase; color: var(--text-secondary); }
+
+        /* ── Responsive ── */
+        @media (max-width: 768px) {
+            body, html {
+                overflow-y: auto;
+                height: auto;
+            }
+            .app-container {
+                flex-direction: column;
+                height: auto;
+            }
+            .gl-pane {
+                width: 100%;
+                height: 160vh; /* Make it tall enough to comfortably view 4 vertical panels */
+                flex: none;
+            }
+            .sidebar-pane {
+                width: 100%;
+                min-width: 100%;
+                height: auto;
+                border-left: none;
+                border-top: 1px solid var(--glass-border);
+            }
+            .panel-labels {
+                display: flex;
+                flex-direction: column;
+            }
+            .panel-label {
+                flex: 1; /* Divides the 160vh evenly into 4 pieces */
+                justify-content: flex-end;
+                padding-bottom: 24px;
+            }
+            /* Match the shader's vertical order */
+            #label-sdr { order: 1; }
+            #label-naive { order: 2; }
+            #label-luma { order: 3; }
+            #label-aces { order: 4; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <!-- LEFT PANE: Canvas -->
+    <main class="gl-pane" id="glPane">
+        <div class="loading-indicator" id="loading">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Loading…</div>
+        </div>
+        
+        <canvas id="glcanvas"></canvas>
+        
+        <div class="fps-counter"><span>FPS</span> <strong id="fpsValue">60</strong></div>
+        
+        <nav class="panel-labels">
+            <div class="panel-label" id="label-sdr">
+                <div class="panel-label-tag"><span class="panel-label-dot dot-blue"></span> BT.709 SDR</div>
+                <div class="panel-label-desc">Original image in Rec. 709 / sRGB</div>
+            </div>
+            <div class="panel-label" id="label-naive">
+                <div class="panel-label-tag"><span class="panel-label-dot dot-orange"></span> Raw HDR Expansion</div>
+                <div class="panel-label-desc">Uncompressed float data — highlights clip to white</div>
+            </div>
+            <div class="panel-label" id="label-aces">
+                <div class="panel-label-tag"><span class="panel-label-dot dot-green"></span> ACES Tonemapped</div>
+                <div class="panel-label-desc">Perceptual HDR headroom gracefully compressed</div>
+            </div>
+            <div class="panel-label" id="label-luma">
+                <div class="panel-label-tag"><span class="panel-label-dot dot-pink"></span> Luma Analysis</div>
+                <div class="panel-label-desc">Highlights (green) · Shadows (blue) · Midtones (gray)</div>
+            </div>
+        </nav>
+    </main>
+
+    <!-- RIGHT PANE: Sidebar -->
+    <aside class="sidebar-pane">
+        <header class="sidebar-header">
+            <div class="logo-area">
+                <div class="logo-icon">H</div>
+                <div>
+                    <div class="logo-title">SDR → HDR Pipeline</div>
+                    <div class="logo-subtitle">WebGL 2.0 Real-time Shader</div>
+                </div>
+            </div>
+            <div class="top-actions">
+                <input type="file" id="imageUpload" accept="image/*" style="display: none;">
+                <button class="btn-glass" onclick="document.getElementById('imageUpload').click()">
+                    <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></svg> Upload Image
+                </button>
+                <button class="btn-glass" onclick="downloadHDR()">
+                    <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Download HDR
+                </button>
+                <a class="btn-glass" href="https://github.com/tapos-datta/sdr-to-hdr-perceptual-pipeline" target="_blank">
+                    <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub
+                </a>
+            </div>
+        </header>
+
+        <section class="sidebar-section">
+            <h3>Tone Mapping Parameters</h3>
+            <div class="control-group">
+                <label>Shadow Pivot <span id="val-shadowPivot">0.20</span></label>
+                <input type="range" id="param-shadowPivot" min="0.0" max="0.5" step="0.01" value="0.20">
+            </div>
+            <div class="control-group">
+                <label>Shadow Gain <span id="val-shadowGain">0.90</span></label>
+                <input type="range" id="param-shadowGain" min="0.5" max="2.0" step="0.01" value="0.90">
+            </div>
+            <div class="control-group">
+                <label>Highlight Pivot <span id="val-highlightPivot">0.60</span></label>
+                <input type="range" id="param-highlightPivot" min="0.4" max="1.0" step="0.01" value="0.60">
+            </div>
+            <div class="control-group">
+                <label>Highlight Strength <span id="val-highlightStrength">0.85</span></label>
+                <input type="range" id="param-highlightStrength" min="0.0" max="0.99" step="0.01" value="0.85">
+            </div>
+        </section>
+
+        <section class="sidebar-section pipeline">
+            <h3>Pipeline Details</h3>
+            <div class="info-item">
+                <div class="info-item-label">Input</div>
+                <div class="info-item-value"><code>BT.709</code> / sRGB</div>
+            </div>
+            <div class="info-item">
+                <div class="info-item-label">HDR Output</div>
+                <div class="info-item-value"><code>ACES Filmic</code> Tonemap (via BT.2020)</div>
+            </div>
+            <div class="info-item">
+                <div class="info-item-label">Float Buffer</div>
+                <div class="info-item-value"><code>RGBA16F</code> FBO (16-bit half-float)</div>
+            </div>
+            <div class="info-item">
+                <div class="info-item-label">Rendering</div>
+                <div class="info-item-value">WebGL 2.0 • 2-pass pipeline</div>
+            </div>
+        </section>
+    </aside>
+</div>
+
+<script>
+    const imageUpload = document.getElementById('imageUpload');
+    const loadingEl = document.getElementById('loading');
+    const glPane = document.getElementById('glPane');
+    const canvas = document.getElementById('glcanvas');
+    const fpsValueEl = document.getElementById('fpsValue');
+
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+    function updateFps(now) {
+        frameCount++;
+        if (now - lastFpsTime >= 1000) {
+            fpsValueEl.textContent = frameCount;
+            frameCount = 0;
+            lastFpsTime = now;
+        }
+    }
+
+    async function loadShaderSource(url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to load ${url}`);
+        return res.text();
+    }
+
+    async function init() {
+        canvas.width = glPane.clientWidth;
+        canvas.height = glPane.clientHeight;
+
+        const gl = canvas.getContext('webgl2');
+        if (!gl) {
+            loadingEl.innerHTML = '<div class="loading-text" style="color: #ef5350;">WebGL 2.0 not supported.</div>';
+            return;
+        }
+
+        gl.getExtension('EXT_color_buffer_float');
+
+        const [vsSource, hdrFsSource, displayFsSource] = await Promise.all([
+            loadShaderSource('shaders/vertex.glsl'),
+            loadShaderSource('shaders/hdr_pass.glsl'),
+            loadShaderSource('shaders/display_pass.glsl'),
+        ]);
+
+        function compileShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(vs, fs) {
+            const p = gl.createProgram();
+            gl.attachShader(p, compileShader(gl.VERTEX_SHADER, vs));
+            gl.attachShader(p, compileShader(gl.FRAGMENT_SHADER, fs));
+            gl.linkProgram(p);
+            return p;
+        }
+
+        const hdrProgram = createProgram(vsSource, hdrFsSource);
+        const displayProgram = createProgram(vsSource, displayFsSource);
+
+        const vao = gl.createVertexArray();
+        gl.bindVertexArray(vao);
+        const quadBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1, 1,1, -1,-1, 1,-1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+        const hdrUniforms = {
+            resolution: gl.getUniformLocation(hdrProgram, 'u_resolution'),
+            imgRes:     gl.getUniformLocation(hdrProgram, 'u_imageResolution'),
+            time:       gl.getUniformLocation(hdrProgram, 'u_time'),
+            texture:    gl.getUniformLocation(hdrProgram, 'u_texture'),
+            shadowPivot: gl.getUniformLocation(hdrProgram, 'u_shadowPivot'),
+            shadowGain:  gl.getUniformLocation(hdrProgram, 'u_shadowGain'),
+            highlightPivot: gl.getUniformLocation(hdrProgram, 'u_highlightPivot'),
+            highlightStrength: gl.getUniformLocation(hdrProgram, 'u_highlightStrength'),
+            exportMode: gl.getUniformLocation(hdrProgram, 'u_exportMode')
+        };
+        const displayUniforms = {
+            resolution: gl.getUniformLocation(displayProgram, 'u_resolution'),
+            hdrBuffer:  gl.getUniformLocation(displayProgram, 'u_hdrBuffer'),
+        };
+
+        let fboWidth = canvas.width, fboHeight = canvas.height;
+        const hdrTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, hdrTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, fboWidth, fboHeight, 0, gl.RGBA, gl.HALF_FLOAT, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdrTexture, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+        function resizeFbo(w, h) {
+            fboWidth = w; fboHeight = h;
+            gl.bindTexture(gl.TEXTURE_2D, hdrTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+        }
+
+        const sourceTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+
+        const image = new Image();
+        image.src = 'sample.jpg';
+        image.crossOrigin = 'anonymous';
+
+        let imgWidth = 1.0, imgHeight = 1.0;
+
+        function updateTexture(img) {
+            imgWidth = img.width; imgHeight = img.height;
+            gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            loadingEl.classList.add('hidden');
+        }
+
+        image.onload = () => updateTexture(image);
+        image.onerror = () => { loadingEl.innerHTML = '<div class="loading-text" style="color:#ef5350;">Image load failed</div>'; };
+
+        imageUpload.addEventListener('change', e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            loadingEl.classList.remove('hidden');
+            loadingEl.innerHTML = '<div class="loading-spinner"></div><div class="loading-text">Processing…</div>';
+            const reader = new FileReader();
+            reader.onload = ev => {
+                const img = new Image();
+                img.onload = () => {
+                    const maxBudget = 12000000; // 3000x4000
+                    if (img.width * img.height > maxBudget) {
+                        const ratio = Math.sqrt(maxBudget / (img.width * img.height));
+                        const offW = Math.floor(img.width * ratio);
+                        const offH = Math.floor(img.height * ratio);
+                        const offscreen = document.createElement('canvas');
+                        offscreen.width = offW;
+                        offscreen.height = offH;
+                        const ctx = offscreen.getContext('2d');
+                        ctx.drawImage(img, 0, 0, offW, offH);
+                        updateTexture(offscreen);
+                    } else {
+                        updateTexture(img);
+                    }
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function renderFrame(time) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.viewport(0, 0, fboWidth, fboHeight);
+            gl.useProgram(hdrProgram);
+
+            const pShadowPivot = parseFloat(document.getElementById('param-shadowPivot').value);
+            const pShadowGain = parseFloat(document.getElementById('param-shadowGain').value);
+            const pHighlightPivot = parseFloat(document.getElementById('param-highlightPivot').value);
+            const pHighlightStrength = parseFloat(document.getElementById('param-highlightStrength').value);
+
+            document.getElementById('val-shadowPivot').textContent = pShadowPivot.toFixed(2);
+            document.getElementById('val-shadowGain').textContent = pShadowGain.toFixed(2);
+            document.getElementById('val-highlightPivot').textContent = pHighlightPivot.toFixed(2);
+            document.getElementById('val-highlightStrength').textContent = pHighlightStrength.toFixed(2);
+
+            gl.uniform2f(hdrUniforms.resolution, fboWidth, fboHeight);
+            gl.uniform2f(hdrUniforms.imgRes, imgWidth, imgHeight);
+            gl.uniform1f(hdrUniforms.time, time * 0.001);
+            gl.uniform1f(hdrUniforms.shadowPivot, pShadowPivot);
+            gl.uniform1f(hdrUniforms.shadowGain, pShadowGain);
+            gl.uniform1f(hdrUniforms.highlightPivot, pHighlightPivot);
+            gl.uniform1f(hdrUniforms.highlightStrength, pHighlightStrength);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+            gl.uniform1i(hdrUniforms.texture, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.useProgram(displayProgram);
+            gl.uniform2f(displayUniforms.resolution, canvas.width, canvas.height);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, hdrTexture);
+            gl.uniform1i(displayUniforms.hdrBuffer, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+
+        function loop(time) {
+            if (canvas.width !== glPane.clientWidth || canvas.height !== glPane.clientHeight) {
+                canvas.width = glPane.clientWidth;
+                canvas.height = glPane.clientHeight;
+                resizeFbo(canvas.width, canvas.height);
+            }
+            
+            gl.useProgram(hdrProgram);
+            gl.uniform1i(hdrUniforms.exportMode, 0); // Normal grid mode
+            
+            renderFrame(time);
+            
+            updateFps(performance.now());
+            requestAnimationFrame(loop);
+        }
+        
+        window.downloadHDR = function() {
+            // Save original viewport sizes
+            const origW = canvas.width;
+            const origH = canvas.height;
+            const origFboW = fboWidth;
+            const origFboH = fboHeight;
+            
+            // Resize canvas specifically for the image
+            canvas.width = imgWidth;
+            canvas.height = imgHeight;
+            resizeFbo(imgWidth, imgHeight);
+            
+            // Set export mode (disables grid, renders only Tonemapped HDR)
+            gl.useProgram(hdrProgram);
+            gl.uniform1i(hdrUniforms.exportMode, 1);
+            
+            // Render a single synchronous frame at full resolution
+            renderFrame(performance.now());
+            
+            // Export directly from the WebGL context buffer
+            const dataUrl = canvas.toDataURL('image/png', 1.0);
+            
+            // Restore everything
+            gl.useProgram(hdrProgram);
+            gl.uniform1i(hdrUniforms.exportMode, 0);
+            canvas.width = origW;
+            canvas.height = origH;
+            resizeFbo(origFboW, origFboH);
+            
+            // Trigger download
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = 'HDR_Tonemapped_Export.png';
+            a.click();
+        };
+
+        requestAnimationFrame(loop);
+    }
+    init().catch(err => console.error(err));
+</script>
+</body>
+</html>
