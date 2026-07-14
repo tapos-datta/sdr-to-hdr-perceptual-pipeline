@@ -52,3 +52,7 @@ The WebGL shader dynamically divides the screen into four quadrants to compare t
 2. Click **Upload Image** to test your own SDR images.
 3. Play with the **Tone Mapping Parameters** panel and watch the diagnostic Luma Analysis and Raw HDR Expansion panels react instantly.
 4. Click **Download HDR** to export the tonemapped result!
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
